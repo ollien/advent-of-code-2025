@@ -109,8 +109,8 @@ fn parse_input(input: String) -> Result(List(Range), String) {
 fn parse_range(input: String) -> Result(Range, String) {
   case string.split_once(input, "-") {
     Ok(#(raw_start, raw_end)) -> {
-      use start <- result.try(parse_int(raw_start))
-      use end <- result.try(parse_int(raw_end))
+      use start <- result.try(parse_positive_int(raw_start))
+      use end <- result.try(parse_positive_int(raw_end))
 
       Ok(Range(start:, end:))
     }
@@ -120,8 +120,15 @@ fn parse_range(input: String) -> Result(Range, String) {
   }
 }
 
-fn parse_int(n: String) -> Result(Int, String) {
-  n
+fn parse_positive_int(input: String) -> Result(Int, String) {
+  input
   |> int.parse()
-  |> result.map_error(fn(_: Nil) { "Malformed int '" <> n <> "'" })
+  |> result.map_error(fn(_: Nil) { "Malformed positive int '" <> input <> "'" })
+  |> result.try(fn(n) {
+    case n > 0 {
+      True -> Ok(n)
+      // Necessary for logarithms to take place
+      False -> Error("Malformed positive int '" <> input <> "'")
+    }
+  })
 }
