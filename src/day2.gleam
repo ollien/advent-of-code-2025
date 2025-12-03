@@ -90,7 +90,6 @@ fn log_10(n: Float) -> Result(Float, Nil) {
 
 fn divide_to_parts(n: Int, divisor: Int) -> List(Int) {
   use <- bool.guard(n == 0, return: [])
-  // echo #(n, divisor, n % divisor)
 
   let m = n % divisor
   [m, ..divide_to_parts(n / divisor, divisor)]
