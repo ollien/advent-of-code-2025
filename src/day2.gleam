@@ -32,12 +32,7 @@ fn solve(ranges: List(Range), solver: fn(Range) -> List(Int)) -> String {
 fn part1(range: Range) -> List(Int) {
   list.range(range.start, range.end)
   |> list.filter(fn(n) {
-    let assert Ok(n_log_10) = log_10(int.to_float(n))
-    let digits =
-      n_log_10
-      |> float.ceiling()
-      |> float.truncate()
-
+    let digits = num_digits(n)
     use <- bool.guard(digits % 2 == 1, return: False)
     let assert Ok(divisor) =
       int.power(10, int.to_float(digits / 2)) |> result.map(float.truncate)
@@ -52,12 +47,7 @@ fn part1(range: Range) -> List(Int) {
 fn part2(range: Range) -> List(Int) {
   list.range(range.start, range.end)
   |> list.filter(fn(n) {
-    let assert Ok(n_log_10) = log_10(int.to_float(n))
-    let digits = {
-      n_log_10
-      |> float.ceiling()
-      |> float.truncate()
-    }
+    let digits = num_digits(n)
 
     use <- bool.guard(digits <= 1, return: False)
 
@@ -73,6 +63,20 @@ fn part2(range: Range) -> List(Int) {
     })
     |> result.is_ok()
   })
+}
+
+fn num_digits(n: Int) -> Int {
+  use <- bool.guard(n == 0, return: 1)
+
+  let assert Ok(n_log_10) =
+    n
+    |> int.absolute_value
+    |> int.to_float()
+    |> log_10
+
+  n_log_10
+  |> float.ceiling()
+  |> float.truncate()
 }
 
 fn log_10(n: Float) -> Result(Float, Nil) {
