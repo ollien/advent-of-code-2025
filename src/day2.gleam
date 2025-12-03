@@ -49,7 +49,8 @@ fn part2(range: Range) -> List(Int) {
   |> list.filter(fn(n) {
     let digits = num_digits(n)
 
-    use <- bool.guard(digits <= 1, return: False)
+    // one digit numbers can never pass
+    use <- bool.guard(digits == 1, return: False)
 
     list.range(1, digits / 2)
     |> list.find(fn(pow) {
@@ -67,6 +68,7 @@ fn part2(range: Range) -> List(Int) {
 
 fn num_digits(n: Int) -> Int {
   use <- bool.guard(n == 0, return: 1)
+  use <- bool.guard(int.absolute_value(n) == 1, return: 1)
 
   let assert Ok(n_log_10) =
     n
