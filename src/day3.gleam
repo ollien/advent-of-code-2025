@@ -16,44 +16,106 @@ pub fn main() {
 fn run(input: String) -> Result(Nil, String) {
   use banks <- result.try(parse_input(input))
   io.println("Part 1: " <> part1(banks))
+  io.println("Part 2: " <> part2(banks))
   Ok(Nil)
 }
 
 fn part1(banks: List(Bank)) -> String {
   banks
-  |> list.map(best_battery_config)
+  |> list.map(fn(bank) {
+    // battery bank must be at least two long and has digits (from parsing)
+    let assert Ok(config) = best_battery_config(bank, 2)
+
+    config
+  })
   |> int.sum()
   |> int.to_string()
 }
 
-fn best_battery_config(bank: Bank) -> Int {
-  // We've guaranteed bank batteries will have at least two elements so both these asserts are ok
-  let assert Ok(#(max, rest)) = max_and_after(bank.batteries)
-  let assert Ok(rest_max) = list.max(rest, int.compare)
-  max * 10 + rest_max
+fn part2(banks: List(Bank)) -> String {
+  banks
+  |> list.map(fn(bank) {
+    // battery bank must be at least two long and has digits (from parsing)
+    let assert Ok(config) = best_battery_config(bank, 12)
+
+    config
+  })
+  |> int.sum()
+  |> int.to_string()
 }
 
-fn max_and_after(batteries: List(Int)) -> Result(#(Int, List(Int)), Nil) {
+fn best_battery_config(bank: Bank, length: Int) -> Result(Int, String) {
+  do_best_battery_config(bank.batteries, [], length)
+}
+
+fn do_best_battery_config(
+  remaining_batteries: List(Int),
+  maxes: List(Int),
+  length_remaining: Int,
+) -> Result(Int, String) {
+  let num_maxes = list.length(maxes)
+  case length_remaining {
+    0 if num_maxes == 0 -> {
+      Error("No batteries to configure")
+    }
+
+    0 -> {
+      maxes
+      |> list.reverse()
+      |> concat_digits()
+    }
+
+    _n -> {
+      remaining_batteries
+      |> max_and_after(length_remaining - 1)
+      |> result.try(fn(result) {
+        let #(max, rest) = result
+        do_best_battery_config(rest, [max, ..maxes], length_remaining - 1)
+      })
+    }
+  }
+}
+
+fn concat_digits(digits: List(Int)) -> Result(Int, String) {
+  list.try_fold(digits, 0, fn(acc, n) {
+    case n > 9 || n < 0 {
+      True -> Error(int.to_string(n) <> " is not a digit")
+      False -> Ok(acc * 10 + n)
+    }
+  })
+}
+
+fn max_and_after(
+  batteries: List(Int),
+  min_to_maintain: Int,
+) -> Result(#(Int, List(Int)), String) {
   case batteries {
-    [] -> Error(Nil)
-    [_n] -> Error(Nil)
-    [head, ..rest] -> do_max_and_after(rest, head, rest)
+    [] -> Error("No batteries to scan")
+    [head, ..rest] -> Ok(do_max_and_after(rest, min_to_maintain, head, rest))
   }
 }
 
 fn do_max_and_after(
   batteries: List(Int),
+  min_to_maintain: Int,
   best_head: Int,
   best_rest: List(Int),
-) -> Result(#(Int, List(Int)), Nil) {
+) -> #(Int, List(Int)) {
+  let num_batteries = list.length(batteries)
+
   case batteries {
-    [] -> Error(Nil)
-    [_n] -> Ok(#(best_head, best_rest))
+    [] -> #(best_head, best_rest)
+    [_head, ..] if num_batteries < min_to_maintain -> {
+      #(best_head, best_rest)
+    }
+    [_head, ..] if num_batteries == min_to_maintain -> {
+      #(best_head, best_rest)
+    }
     [head, ..rest] if head <= best_head -> {
-      do_max_and_after(rest, best_head, best_rest)
+      do_max_and_after(rest, min_to_maintain, best_head, best_rest)
     }
     [head, ..rest] -> {
-      do_max_and_after(rest, head, rest)
+      do_max_and_after(rest, min_to_maintain, head, rest)
     }
   }
 }
