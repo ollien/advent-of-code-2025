@@ -59,9 +59,10 @@ fn part2(range: Range) -> List(Int) {
       |> float.truncate()
     }
 
+    use <- bool.guard(digits <= 1, return: False)
+
     list.range(1, digits / 2)
     |> list.find(fn(pow) {
-      use <- bool.guard(pow < 1, return: False)
       use <- bool.guard(digits % pow != 0, False)
 
       let assert Ok(divisor) =
