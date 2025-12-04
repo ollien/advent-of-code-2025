@@ -1,4 +1,5 @@
 import advent_of_code_2025
+import gleam/bool
 import gleam/int
 import gleam/list
 import gleam/order
@@ -28,14 +29,44 @@ pub fn main() {
 fn run(input: String) -> Result(Nil, String) {
   use map <- result.try(parse_input(input))
   io.println("Part 1: " <> part1(map))
+  io.println("Part 2: " <> part2(map))
 
   Ok(Nil)
 }
 
 fn part1(map: Map) -> String {
-  map.paper
-  |> set.to_list()
-  |> list.count(fn(position) {
+  map
+  |> removable_paper()
+  |> set.size()
+  |> int.to_string()
+}
+
+fn part2(map: Map) -> String {
+  map
+  |> do_part2(set.new())
+  |> int.to_string()
+}
+
+fn do_part2(map: Map, accessed_rolls: set.Set(Position)) -> Int {
+  let candidates = removable_paper(map)
+  let to_remove =
+    candidates
+    |> set.to_list()
+    |> list.first()
+
+  case to_remove {
+    Error(Nil) -> set.size(accessed_rolls)
+    Ok(removing) -> {
+      do_part2(
+        remove_paper(map, removing),
+        set.insert(accessed_rolls, removing),
+      )
+    }
+  }
+}
+
+fn removable_paper(map: Map) -> set.Set(Position) {
+  set.filter(map.paper, fn(position) {
     let num_neighbors =
       position
       |> adjacent_positions()
@@ -45,7 +76,6 @@ fn part1(map: Map) -> String {
 
     num_neighbors < 4
   })
-  |> int.to_string()
 }
 
 fn adjacent_positions(position: Position) -> List(Position) {
@@ -62,6 +92,13 @@ fn adjacent_positions(position: Position) -> List(Position) {
     let #(d_row, d_col) = deltas
     Position(row: position.row + d_row, col: position.col + d_col)
   })
+}
+
+fn remove_paper(map: Map, position: Position) -> Map {
+  Map(
+    empty: set.insert(map.empty, position),
+    paper: set.delete(map.paper, position),
+  )
 }
 
 fn parse_input(input: String) -> Result(Map, String) {
