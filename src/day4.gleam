@@ -12,7 +12,7 @@ type Position {
 }
 
 type Map {
-  Map(empty: set.Set(Position), paper: set.Set(Position))
+  Map(paper: set.Set(Position))
 }
 
 type MapTile {
@@ -87,10 +87,7 @@ fn adjacent_positions(position: Position) -> List(Position) {
 }
 
 fn remove_paper(map: Map, position: Position) -> Map {
-  Map(
-    empty: set.insert(map.empty, position),
-    paper: set.delete(map.paper, position),
-  )
+  Map(paper: set.delete(map.paper, position))
 }
 
 fn parse_input(input: String) -> Result(Map, String) {
@@ -102,7 +99,7 @@ fn parse_input(input: String) -> Result(Map, String) {
     let map =
       list.index_fold(
         over: input_tiles,
-        from: Map(empty: set.new(), paper: set.new()),
+        from: Map(paper: set.new()),
         with: build_map_line,
       )
 
@@ -128,10 +125,9 @@ fn build_map_line(map: Map, line_tiles: List(MapTile), row: Int) {
     from: map,
     with: fn(map: Map, tile: MapTile, col: Int) {
       case tile {
-        Paper -> Map(..map, paper: set.insert(map.paper, Position(row:, col:)))
-        Empty -> Map(..map, empty: set.insert(map.empty, Position(row:, col:)))
+        Paper -> Map(paper: set.insert(map.paper, Position(row:, col:)))
+        Empty -> map
       }
     },
   )
 }
-// fn parse_line(line: String, row: Int) -> Result(Map[])
