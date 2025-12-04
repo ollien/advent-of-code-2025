@@ -1,8 +1,6 @@
 import advent_of_code_2025
-import gleam/bool
 import gleam/int
 import gleam/list
-import gleam/order
 import gleam/string
 
 import gleam/io
@@ -47,20 +45,14 @@ fn part2(map: Map) -> String {
   |> int.to_string()
 }
 
-fn do_part2(map: Map, accessed_rolls: set.Set(Position)) -> Int {
-  let candidates = removable_paper(map)
-  let to_remove =
-    candidates
-    |> set.to_list()
-    |> list.first()
-
-  case to_remove {
-    Error(Nil) -> set.size(accessed_rolls)
-    Ok(removing) -> {
-      do_part2(
-        remove_paper(map, removing),
-        set.insert(accessed_rolls, removing),
-      )
+fn do_part2(map: Map, removed_rolls: set.Set(Position)) -> Int {
+  let removable = removable_paper(map)
+  case set.is_empty(removable) {
+    True -> set.size(removed_rolls)
+    False -> {
+      removable
+      |> set.fold(from: map, with: fn(map, acc) { remove_paper(map, acc) })
+      |> do_part2(set.union(removed_rolls, removable))
     }
   }
 }
