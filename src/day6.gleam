@@ -23,6 +23,10 @@ type Problem {
   Problem(operands: List(Int), operator: Operator, alignment: Alignment)
 }
 
+type Digit {
+  Digit(Int)
+}
+
 pub fn main() {
   advent_of_code_2025.run_with_input_file(run)
 }
@@ -81,10 +85,7 @@ fn transpose_operands(operands: List(Int), alignment: Alignment) -> List(Int) {
           option.to_result(maybe_digit, Nil)
         })
 
-      // If this fails, there's a bug with concat_digits not giving us digits
-      let assert Ok(res) = concat_digits(digits)
-
-      res
+      concat_digits(digits)
     })
   })
   // If there's no maximum, the operands are empty, so there's nothing to transpose
@@ -105,27 +106,26 @@ fn count_digits(n: Int) -> Int {
   log_10_floor + 1
 }
 
-fn split_digits(n: Int) -> List(Int) {
+fn split_digits(n: Int) -> List(Digit) {
   n
   |> do_split_digits()
   |> list.reverse()
 }
 
-fn do_split_digits(n: Int) -> List(Int) {
+fn do_split_digits(n: Int) -> List(Digit) {
   case n % 10 == n {
-    True -> [n]
+    True -> [Digit(n)]
     False -> {
-      [n % 10, ..do_split_digits(n / 10)]
+      [Digit(n % 10), ..do_split_digits(n / 10)]
     }
   }
 }
 
-fn concat_digits(digits: List(Int)) -> Result(Int, String) {
-  list.try_fold(digits, 0, fn(acc, n) {
-    case n > 9 || n < 0 {
-      True -> Error(int.to_string(n) <> " is not a digit")
-      False -> Ok(acc * 10 + n)
-    }
+fn concat_digits(digits: List(Digit)) -> Int {
+  list.fold(digits, 0, fn(acc, digit) {
+    let Digit(n) = digit
+    // We know from the type this must be 0-9
+    acc * 10 + n
   })
 }
 
