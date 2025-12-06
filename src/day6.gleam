@@ -241,75 +241,70 @@ fn decompose_column(
 ) -> Result(#(List(Int), Alignment), String) {
   let values = list.map(entries, fn(entry) { entry.0 })
   let alignments =
-    list.fold(entries, dict.new(), fn(acc, entry) {
-      let #(n, alignment) = entry
-      let acc_entry =
-        acc
-        |> dict.get(alignment)
-        |> result.unwrap(or: [])
-
-      dict.insert(acc, alignment, [n, ..acc_entry])
+    entries
+    |> list.group(fn(entry) { entry.1 })
+    |> dict.map_values(fn(_alignment, entries: List(#(Int, Alignment))) {
+      list.map(entries, fn(entry) { entry.0 })
     })
 
-  let lefts =
+  let left_counts =
     alignments
     |> dict.get(Left)
     |> result.unwrap(or: [])
+    |> list.map(count_digits)
+    |> list.unique()
 
-  let rights =
+  let right_counts =
     alignments
     |> dict.get(Right)
     |> result.unwrap(or: [])
+    |> list.map(count_digits)
+    |> list.unique()
 
   // If we're lucky, everything will be left/right aligned
   // However, there is an ambiguity when a number takes up the full width,
   // so in those cases we look at the "odd ones out" and make sure
   // that nothing in the opposite alignment is wider.
-  case lefts, rights {
-    _lefts, [] -> Ok(#(values, Left))
-    [], _rights -> Ok(#(values, Right))
-    lefts, rights -> {
-      let left_counts =
-        lefts
-        |> list.map(count_digits)
-        |> list.unique()
-
-      let right_counts =
-        rights
-        |> list.map(count_digits)
-        |> list.unique()
-
-      let alignment_res = case left_counts, right_counts {
-        [left_count], right_counts -> {
-          // We know the list must be non empty
-          let assert Ok(max_right_counts) = list.max(right_counts, int.compare)
-          case left_count >= max_right_counts {
-            True -> Ok(Right)
-            False -> Error(Nil)
-          }
-        }
-
-        left_counts, [right_count] -> {
-          // We know the list must be non empty
-          let assert Ok(max_left_counts) = list.max(left_counts, int.compare)
-          case right_count >= max_left_counts {
-            True -> Ok(Left)
-            False -> Error(Nil)
-          }
-        }
-
-        _, _ -> {
-          Error(Nil)
-        }
-      }
-
-      alignment_res
-      |> result.map(fn(alignment) { #(values, alignment) })
-      |> result.map_error(fn(_: Nil) {
-        "Column entries do not have consistent alignments:  "
-        <> make_misalignment_error_debug(entries)
-      })
+  let alignment_res = case left_counts, right_counts {
+    _left_counts, [] -> {
+      Ok(Left)
     }
+
+    [], _right_counts -> {
+      Ok(Right)
+    }
+
+    [left_count], right_counts -> {
+      try_assume_alignment(Right, right_counts, left_count)
+    }
+
+    left_counts, [right_count] -> {
+      try_assume_alignment(Left, left_counts, right_count)
+    }
+
+    _, _ -> {
+      Error(Nil)
+    }
+  }
+
+  alignment_res
+  |> result.map(fn(alignment) { #(values, alignment) })
+  |> result.map_error(fn(_: Nil) {
+    "Column entries do not have consistent alignments:  "
+    <> make_misalignment_error_debug(entries)
+  })
+}
+
+fn try_assume_alignment(
+  alignment: Alignment,
+  lengths_of_alignment: List(Int),
+  length_of_other_alignment: Int,
+) -> Result(Alignment, Nil) {
+  case list.max(lengths_of_alignment, int.compare) {
+    Error(Nil) -> Ok(alignment)
+    Ok(max_of_alignment) if length_of_other_alignment >= max_of_alignment ->
+      Ok(alignment)
+    Ok(_max_of_alignment) -> Error(Nil)
   }
 }
 
