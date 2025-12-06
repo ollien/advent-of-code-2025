@@ -344,12 +344,17 @@ fn split_operators(input: String) -> Result(#(List(String), String), String) {
 fn pop_last(list: List(a)) -> Result(#(List(a), a), Nil) {
   case list {
     [] -> Error(Nil)
-    [last] -> Ok(#([], last))
-    [head, ..rest] -> {
-      // We know rest must have at least one element
-      let assert Ok(#(others, last)) = pop_last(rest)
-      Ok(#([head, ..others], last))
-    }
+    [head, ..rest] ->
+      rest
+      |> pop_last()
+      |> result.map(fn(popped) {
+        let #(others, last) = popped
+
+        #([head, ..others], last)
+      })
+      // If there's nothing in rest, we can just give back head as the last element
+      |> result.unwrap(or: #([], head))
+      |> Ok
   }
 }
 
