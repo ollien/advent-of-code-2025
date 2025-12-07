@@ -144,38 +144,21 @@ fn do_run_quantum_simulation(
       let is_splitter = set.contains(map.splitters, position_candidate)
       case is_splitter {
         True -> {
-          branch_quantum_simulation(
+          let left_beam = Position(..beam, col: beam.col + 1)
+          let right_beam = Position(..beam, col: beam.col - 1)
+          let num_timelines = num_timelines + 1
+
+          let QuantumSimulationOutcome(num_timelines:, memo:) =
+            continue_quantum_simulation(map, left_beam, num_timelines, memo)
+          continue_quantum_simulation(map, right_beam, num_timelines, memo)
+        }
+        False -> {
+          continue_quantum_simulation(
             map,
             position_candidate,
             num_timelines,
             memo,
           )
-        }
-        False -> {
-          let in_bounds =
-            in_bounds(
-              width: map.width,
-              height: map.height,
-              candidate: position_candidate,
-            )
-
-          case in_bounds {
-            True -> {
-              let map = Map(..map, beams: set.from_list([position_candidate]))
-              let outcome = do_run_quantum_simulation(map, num_timelines, memo)
-              let memo =
-                dict.insert(
-                  outcome.memo,
-                  position_candidate,
-                  outcome.num_timelines - num_timelines,
-                )
-
-              QuantumSimulationOutcome(..outcome, memo:)
-            }
-            False -> {
-              QuantumSimulationOutcome(num_timelines:, memo:)
-            }
-          }
         }
       }
     },
@@ -194,50 +177,28 @@ fn from_memo(
   }
 }
 
-fn branch_quantum_simulation(
+fn continue_quantum_simulation(
   map: Map,
   beam: Position,
   num_timelines: Int,
   memo: dict.Dict(Position, Int),
 ) {
-  let left_beam = Position(..beam, col: beam.col + 1)
-  let right_beam = Position(..beam, col: beam.col - 1)
-  let num_timelines = num_timelines + 1
+  let in_bounds =
+    in_bounds(width: map.width, height: map.height, candidate: beam)
 
-  let QuantumSimulationOutcome(num_timelines:, memo:) = case
-    in_bounds(width: map.width, height: map.height, candidate: left_beam)
-  {
+  case in_bounds {
     True -> {
-      do_quantum_branch(map, left_beam, num_timelines, memo)
+      let map = Map(..map, beams: set.from_list([beam]))
+      let outcome = do_run_quantum_simulation(map, num_timelines, memo)
+      let memo =
+        dict.insert(outcome.memo, beam, outcome.num_timelines - num_timelines)
+
+      QuantumSimulationOutcome(..outcome, memo:)
     }
     False -> {
       QuantumSimulationOutcome(num_timelines:, memo:)
     }
   }
-
-  case in_bounds(width: map.width, height: map.height, candidate: right_beam) {
-    True -> {
-      do_quantum_branch(map, right_beam, num_timelines, memo)
-    }
-
-    False -> {
-      QuantumSimulationOutcome(num_timelines:, memo:)
-    }
-  }
-}
-
-fn do_quantum_branch(
-  map: Map,
-  beam: Position,
-  num_timelines: Int,
-  memo: dict.Dict(Position, Int),
-) -> QuantumSimulationOutcome {
-  let map = Map(..map, beams: set.from_list([beam]))
-  let outcome = do_run_quantum_simulation(map, num_timelines, memo)
-  let memo =
-    dict.insert(outcome.memo, beam, outcome.num_timelines - num_timelines)
-
-  QuantumSimulationOutcome(num_timelines: outcome.num_timelines, memo:)
 }
 
 fn insert_if_in_bounds(
