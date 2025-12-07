@@ -1,4 +1,5 @@
 import advent_of_code_2025
+import gleam/bool
 import gleam/dict
 import gleam/int
 import gleam/io
@@ -13,24 +14,23 @@ type Position {
 }
 
 type Map {
-  Map(
-    height: Int,
-    width: Int,
-    splitters: set.Set(Position),
-    beams: set.Set(Position),
-  )
+  Map(height: Int, width: Int, splitters: set.Set(Position))
 }
 
 type Input {
   Input(map: Map, starting_position: Position)
 }
 
-type SimpleSimulationStep {
-  SimpleSimulationStep(map: Map, splits: Int)
+type Solutions {
+  Solutions(part1: Int, part2: Int)
 }
 
-type QuantumSimulationOutcome {
-  QuantumSimulationOutcome(num_timelines: Int, memo: dict.Dict(Position, Int))
+type SolveState {
+  SolveState(
+    num_timelines: Int,
+    splitters_hit: set.Set(Position),
+    memo: dict.Dict(Position, Int),
+  )
 }
 
 pub fn main() {
@@ -39,130 +39,56 @@ pub fn main() {
 
 fn run(input: String) -> Result(Nil, String) {
   use parsed <- result.try(parse_input(input))
+  let solutions = solve(parsed.map, parsed.starting_position)
 
-  io.println(
-    "Part 1: "
-    <> solve(parsed.map, parsed.starting_position, run_simple_simulation),
-  )
+  io.println("Part 1: " <> int.to_string(solutions.part1))
+  io.println("Part 2: " <> int.to_string(solutions.part2))
 
-  io.println(
-    "Part 2: "
-    <> solve(parsed.map, parsed.starting_position, run_quantum_simulation),
-  )
   Ok(Nil)
 }
 
-fn solve(
-  map: Map,
-  starting_position: Position,
-  simulation: fn(Map) -> Int,
-) -> String {
-  let first_beam = Position(..starting_position, row: starting_position.row + 1)
-  let map = Map(..map, beams: set.insert(map.beams, first_beam))
+fn solve(map: Map, active_beam: Position) -> Solutions {
+  let outcome =
+    do_solve(
+      SolveState(num_timelines: 1, splitters_hit: set.new(), memo: dict.new()),
+      map,
+      active_beam,
+    )
 
-  map
-  |> simulation()
-  |> int.to_string()
-}
-
-fn run_simple_simulation(map: Map) -> Int {
-  do_run_simple_simulation(map, 0)
-}
-
-fn do_run_simple_simulation(map: Map, total_splits: Int) -> Int {
-  let step = step_simple_simulation(map, total_splits)
-  case step.map == map {
-    True -> step.splits
-    False -> do_run_simple_simulation(step.map, step.splits)
-  }
-}
-
-fn step_simple_simulation(map: Map, total_splits: Int) -> SimpleSimulationStep {
-  let res =
-    set.fold(map.beams, #(set.new(), total_splits), fn(acc, beam) {
-      let #(beams, splits) = acc
-
-      let position_candidate = Position(..beam, row: beam.row + 1)
-      let is_splitter = set.contains(map.splitters, position_candidate)
-      case is_splitter {
-        True -> {
-          let beams =
-            beams
-            |> insert_if_in_bounds(
-              width: map.width,
-              height: map.height,
-              candidate: Position(..position_candidate, col: beam.col - 1),
-            )
-            |> insert_if_in_bounds(
-              width: map.width,
-              height: map.height,
-              candidate: Position(..position_candidate, col: beam.col + 1),
-            )
-
-          #(beams, splits + 1)
-        }
-        False -> {
-          let beams =
-            insert_if_in_bounds(
-              beams,
-              width: map.width,
-              height: map.height,
-              candidate: position_candidate,
-            )
-
-          #(beams, splits)
-        }
-      }
-    })
-
-  let #(beams, splits) = res
-  SimpleSimulationStep(map: Map(..map, beams:), splits:)
-}
-
-fn run_quantum_simulation(map: Map) -> Int {
-  let outcome = do_run_quantum_simulation(map, 1, dict.new())
-
-  outcome.num_timelines
-}
-
-fn do_run_quantum_simulation(
-  map: Map,
-  num_timelines: Int,
-  memo: dict.Dict(Position, Int),
-) -> QuantumSimulationOutcome {
-  set.fold(
-    map.beams,
-    QuantumSimulationOutcome(num_timelines:, memo:),
-    fn(acc, beam) {
-      let QuantumSimulationOutcome(num_timelines:, memo:) = acc
-
-      use <- from_memo(memo, beam, fn(extra) {
-        QuantumSimulationOutcome(num_timelines: num_timelines + extra, memo:)
-      })
-
-      let position_candidate = Position(..beam, row: beam.row + 1)
-      let is_splitter = set.contains(map.splitters, position_candidate)
-      case is_splitter {
-        True -> {
-          let left_beam = Position(..beam, col: beam.col + 1)
-          let right_beam = Position(..beam, col: beam.col - 1)
-          let num_timelines = num_timelines + 1
-
-          let QuantumSimulationOutcome(num_timelines:, memo:) =
-            continue_quantum_simulation(map, left_beam, num_timelines, memo)
-          continue_quantum_simulation(map, right_beam, num_timelines, memo)
-        }
-        False -> {
-          continue_quantum_simulation(
-            map,
-            position_candidate,
-            num_timelines,
-            memo,
-          )
-        }
-      }
-    },
+  Solutions(
+    part1: set.size(outcome.splitters_hit),
+    part2: outcome.num_timelines,
   )
+}
+
+fn do_solve(
+  solve_state: SolveState,
+  map: Map,
+  active_beam: Position,
+) -> SolveState {
+  use <- from_memo(solve_state.memo, active_beam, fn(extra) {
+    SolveState(..solve_state, num_timelines: solve_state.num_timelines + extra)
+  })
+
+  let position_candidate = Position(..active_beam, row: active_beam.row + 1)
+  let is_splitter = set.contains(map.splitters, position_candidate)
+  case is_splitter {
+    True -> {
+      let left_beam = Position(..active_beam, col: active_beam.col + 1)
+      let right_beam = Position(..active_beam, col: active_beam.col - 1)
+
+      SolveState(
+        ..solve_state,
+        num_timelines: solve_state.num_timelines + 1,
+        splitters_hit: set.insert(solve_state.splitters_hit, position_candidate),
+      )
+      |> continue_with_beam(map, left_beam)
+      |> continue_with_beam(map, right_beam)
+    }
+    False -> {
+      continue_with_beam(solve_state, map, position_candidate)
+    }
+  }
 }
 
 fn from_memo(
@@ -177,40 +103,22 @@ fn from_memo(
   }
 }
 
-fn continue_quantum_simulation(
-  map: Map,
-  beam: Position,
-  num_timelines: Int,
-  memo: dict.Dict(Position, Int),
-) {
+fn continue_with_beam(solve_state: SolveState, map: Map, beam: Position) {
   let in_bounds =
     in_bounds(width: map.width, height: map.height, candidate: beam)
 
-  case in_bounds {
-    True -> {
-      let map = Map(..map, beams: set.from_list([beam]))
-      let outcome = do_run_quantum_simulation(map, num_timelines, memo)
-      let memo =
-        dict.insert(outcome.memo, beam, outcome.num_timelines - num_timelines)
+  use <- bool.guard(!in_bounds, return: solve_state)
 
-      QuantumSimulationOutcome(..outcome, memo:)
-    }
-    False -> {
-      QuantumSimulationOutcome(num_timelines:, memo:)
-    }
-  }
-}
+  let outcome = do_solve(solve_state, map, beam)
 
-fn insert_if_in_bounds(
-  positions: set.Set(Position),
-  width width: Int,
-  height height: Int,
-  candidate candidate: Position,
-) -> set.Set(Position) {
-  case in_bounds(width:, height:, candidate:) {
-    False -> positions
-    True -> set.insert(positions, candidate)
-  }
+  let memo =
+    dict.insert(
+      outcome.memo,
+      beam,
+      outcome.num_timelines - solve_state.num_timelines,
+    )
+
+  SolveState(..outcome, memo:)
 }
 
 fn in_bounds(
@@ -224,28 +132,8 @@ fn in_bounds(
   && candidate.col >= 0
 }
 
-// Helpful for debugging, but not used
-fn debug_print_map(map: Map) -> Nil {
-  list.each(list.range(0, map.height - 1), fn(row) {
-    list.each(list.range(0, map.width - 1), fn(col) {
-      let position = Position(row:, col:)
-      let is_beam = set.contains(map.beams, position)
-      let is_splitter = set.contains(map.splitters, position)
-
-      case is_beam, is_splitter {
-        True, _is_splitter -> io.print("|")
-        False, True -> io.print("^")
-        False, False -> io.print(".")
-      }
-    })
-
-    io.println("")
-  })
-}
-
 fn parse_input(input: String) -> Result(Input, String) {
-  let empty_map =
-    Map(height: 0, width: 0, splitters: set.new(), beams: set.new())
+  let empty_map = Map(height: 0, width: 0, splitters: set.new())
 
   input
   |> string.trim_end()
