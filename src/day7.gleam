@@ -1,4 +1,5 @@
 import advent_of_code_2025
+import gleam/dict
 import gleam/int
 import gleam/io
 import gleam/list
@@ -24,8 +25,12 @@ type Input {
   Input(map: Map, starting_position: Position)
 }
 
-type SimulationStep {
-  SimulationStep(map: Map, splits: Int)
+type SimpleSimulationStep {
+  SimpleSimulationStep(map: Map, splits: Int)
+}
+
+type QuantumSimulationOutcome {
+  QuantumSimulationOutcome(num_timelines: Int, memo: dict.Dict(Position, Int))
 }
 
 pub fn main() {
@@ -35,32 +40,44 @@ pub fn main() {
 fn run(input: String) -> Result(Nil, String) {
   use parsed <- result.try(parse_input(input))
 
-  io.println("Part 1: " <> part1(parsed.map, parsed.starting_position))
+  io.println(
+    "Part 1: "
+    <> solve(parsed.map, parsed.starting_position, run_simple_simulation),
+  )
+
+  io.println(
+    "Part 2: "
+    <> solve(parsed.map, parsed.starting_position, run_quantum_simulation),
+  )
   Ok(Nil)
 }
 
-fn part1(map: Map, starting_position: Position) -> String {
+fn solve(
+  map: Map,
+  starting_position: Position,
+  simulation: fn(Map) -> Int,
+) -> String {
   let first_beam = Position(..starting_position, row: starting_position.row + 1)
   let map = Map(..map, beams: set.insert(map.beams, first_beam))
 
   map
-  |> run_simulation()
+  |> simulation()
   |> int.to_string()
 }
 
-fn run_simulation(map: Map) -> Int {
-  do_run_simulation(map, 0)
+fn run_simple_simulation(map: Map) -> Int {
+  do_run_simple_simulation(map, 0)
 }
 
-fn do_run_simulation(map: Map, total_splits: Int) -> Int {
-  let step = step_simulation(map, total_splits)
+fn do_run_simple_simulation(map: Map, total_splits: Int) -> Int {
+  let step = step_simple_simulation(map, total_splits)
   case step.map == map {
     True -> step.splits
-    False -> do_run_simulation(step.map, step.splits)
+    False -> do_run_simple_simulation(step.map, step.splits)
   }
 }
 
-fn step_simulation(map: Map, total_splits: Int) -> SimulationStep {
+fn step_simple_simulation(map: Map, total_splits: Int) -> SimpleSimulationStep {
   let res =
     set.fold(map.beams, #(set.new(), total_splits), fn(acc, beam) {
       let #(beams, splits) = acc
@@ -99,7 +116,128 @@ fn step_simulation(map: Map, total_splits: Int) -> SimulationStep {
     })
 
   let #(beams, splits) = res
-  SimulationStep(map: Map(..map, beams:), splits:)
+  SimpleSimulationStep(map: Map(..map, beams:), splits:)
+}
+
+fn run_quantum_simulation(map: Map) -> Int {
+  let outcome = do_run_quantum_simulation(map, 1, dict.new())
+
+  outcome.num_timelines
+}
+
+fn do_run_quantum_simulation(
+  map: Map,
+  num_timelines: Int,
+  memo: dict.Dict(Position, Int),
+) -> QuantumSimulationOutcome {
+  set.fold(
+    map.beams,
+    QuantumSimulationOutcome(num_timelines:, memo:),
+    fn(acc, beam) {
+      let QuantumSimulationOutcome(num_timelines:, memo:) = acc
+
+      use <- from_memo(memo, beam, fn(extra) {
+        QuantumSimulationOutcome(num_timelines: num_timelines + extra, memo:)
+      })
+
+      let position_candidate = Position(..beam, row: beam.row + 1)
+      let is_splitter = set.contains(map.splitters, position_candidate)
+      case is_splitter {
+        True -> {
+          branch_quantum_simulation(
+            map,
+            position_candidate,
+            num_timelines,
+            memo,
+          )
+        }
+        False -> {
+          let in_bounds =
+            in_bounds(
+              width: map.width,
+              height: map.height,
+              candidate: position_candidate,
+            )
+
+          case in_bounds {
+            True -> {
+              let map = Map(..map, beams: set.from_list([position_candidate]))
+              let outcome = do_run_quantum_simulation(map, num_timelines, memo)
+              let memo =
+                dict.insert(
+                  outcome.memo,
+                  position_candidate,
+                  outcome.num_timelines - num_timelines,
+                )
+
+              QuantumSimulationOutcome(..outcome, memo:)
+            }
+            False -> {
+              QuantumSimulationOutcome(num_timelines:, memo:)
+            }
+          }
+        }
+      }
+    },
+  )
+}
+
+fn from_memo(
+  memo: dict.Dict(a, b),
+  key: a,
+  then: fn(b) -> c,
+  otherwise: fn() -> c,
+) -> c {
+  case dict.get(memo, key) {
+    Ok(value) -> then(value)
+    Error(Nil) -> otherwise()
+  }
+}
+
+fn branch_quantum_simulation(
+  map: Map,
+  beam: Position,
+  num_timelines: Int,
+  memo: dict.Dict(Position, Int),
+) {
+  let left_beam = Position(..beam, col: beam.col + 1)
+  let right_beam = Position(..beam, col: beam.col - 1)
+  let num_timelines = num_timelines + 1
+
+  let QuantumSimulationOutcome(num_timelines:, memo:) = case
+    in_bounds(width: map.width, height: map.height, candidate: left_beam)
+  {
+    True -> {
+      do_quantum_branch(map, left_beam, num_timelines, memo)
+    }
+    False -> {
+      QuantumSimulationOutcome(num_timelines:, memo:)
+    }
+  }
+
+  case in_bounds(width: map.width, height: map.height, candidate: right_beam) {
+    True -> {
+      do_quantum_branch(map, right_beam, num_timelines, memo)
+    }
+
+    False -> {
+      QuantumSimulationOutcome(num_timelines:, memo:)
+    }
+  }
+}
+
+fn do_quantum_branch(
+  map: Map,
+  beam: Position,
+  num_timelines: Int,
+  memo: dict.Dict(Position, Int),
+) -> QuantumSimulationOutcome {
+  let map = Map(..map, beams: set.from_list([beam]))
+  let outcome = do_run_quantum_simulation(map, num_timelines, memo)
+  let memo =
+    dict.insert(outcome.memo, beam, outcome.num_timelines - num_timelines)
+
+  QuantumSimulationOutcome(num_timelines: outcome.num_timelines, memo:)
 }
 
 fn insert_if_in_bounds(
@@ -108,17 +246,24 @@ fn insert_if_in_bounds(
   height height: Int,
   candidate candidate: Position,
 ) -> set.Set(Position) {
-  case
-    candidate.row >= height
-    || candidate.row < 0
-    || candidate.col >= width
-    || candidate.col < 0
-  {
-    True -> positions
-    False -> set.insert(positions, candidate)
+  case in_bounds(width:, height:, candidate:) {
+    False -> positions
+    True -> set.insert(positions, candidate)
   }
 }
 
+fn in_bounds(
+  width width: Int,
+  height height: Int,
+  candidate candidate: Position,
+) {
+  candidate.row < height
+  && candidate.row >= 0
+  && candidate.col < width
+  && candidate.col >= 0
+}
+
+// Helpful for debugging, but not used
 fn debug_print_map(map: Map) -> Nil {
   list.each(list.range(0, map.height - 1), fn(row) {
     list.each(list.range(0, map.width - 1), fn(col) {
