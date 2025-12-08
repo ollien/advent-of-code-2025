@@ -5,6 +5,7 @@ import gleam/float
 import gleam/int
 import gleam/io
 import gleam/list
+import gleam/option
 import gleam/pair
 import gleam/result
 import gleam/set
@@ -23,6 +24,7 @@ pub fn main() {
 fn run(input: String) -> Result(Nil, String) {
   use points <- result.try(parse_input(input))
   io.println("Part 1: " <> part1(points))
+  io.println("Part 2: " <> part2(points))
 
   Ok(Nil)
 }
@@ -36,6 +38,16 @@ fn part1(points: List(Point)) -> String {
   |> list.take(3)
   |> int.product()
   |> int.to_string()
+}
+
+fn part2(points: List(Point)) -> String {
+  points
+  |> build_until_big_circuit()
+  |> option.map(fn(pair) {
+    let #(point1, point2) = pair
+    int.to_string(point1.x * point2.x)
+  })
+  |> option.unwrap(or: "No solution fund")
 }
 
 fn build_circuits(points: List(Point)) -> List(set.Set(Point)) {
@@ -90,6 +102,54 @@ fn do_build_circuits(
   }
 }
 
+fn build_until_big_circuit(
+  points: List(Point),
+) -> option.Option(#(Point, Point)) {
+  let visit_queue = make_visit_queue(points)
+
+  do_build_until_big_circuit(set.from_list(points), visit_queue, dict.new())
+}
+
+fn do_build_until_big_circuit(
+  points: set.Set(Point),
+  visit_queue: List(#(Point, Point)),
+  adjacencies: dict.Dict(Point, set.Set(Point)),
+) -> option.Option(#(Point, Point)) {
+  use head, visit_queue <- try_pop(visit_queue, fn() { option.None })
+
+  let #(point1, point2) = head
+
+  let point1_neighbors =
+    adjacencies
+    |> dict.get(point1)
+    |> result.unwrap(or: set.new())
+
+  let point2_neighbors =
+    adjacencies
+    |> dict.get(point2)
+    |> result.unwrap(or: set.new())
+
+  use <- bool.lazy_guard(
+    set.contains(point1_neighbors, point2)
+      || set.contains(point2_neighbors, point1),
+    fn() { do_build_until_big_circuit(points, visit_queue, adjacencies) },
+  )
+
+  let point1_neighbors = set.insert(point1_neighbors, point2)
+  let point2_neighbors = set.insert(point2_neighbors, point1)
+
+  let adjacencies =
+    adjacencies
+    |> dict.insert(point1, point1_neighbors)
+    |> dict.insert(point2, point2_neighbors)
+
+  let circuit = walk_circuit(adjacencies, point1)
+  case circuit == points {
+    True -> option.Some(#(point1, point2))
+    False -> do_build_until_big_circuit(points, visit_queue, adjacencies)
+  }
+}
+
 fn circuits_from_adjacencies(
   adjacencies: dict.Dict(Point, set.Set(Point)),
 ) -> List(set.Set(Point)) {
@@ -124,29 +184,30 @@ fn walk_circuit(
   adjacencies: dict.Dict(Point, set.Set(Point)),
   start: Point,
 ) -> set.Set(Point) {
-  do_walk_circuit(adjacencies, start, set.new())
+  do_walk_circuit(adjacencies, [start], set.new())
 }
 
 fn do_walk_circuit(
   adjacencies: dict.Dict(Point, set.Set(Point)),
-  cursor: Point,
+  to_visit: List(Point),
   visited: set.Set(Point),
 ) -> set.Set(Point) {
-  let visited = set.insert(visited, cursor)
+  use visiting, to_visit <- try_pop(to_visit, fn() { visited })
 
-  adjacencies
-  |> dict.get(cursor)
-  |> result.unwrap(or: set.new())
-  |> set.fold(set.new(), fn(acc, neighbor) {
-    case set.contains(visited, neighbor) {
-      True -> acc
-      False -> {
-        do_walk_circuit(adjacencies, neighbor, visited)
-        |> set.union(acc)
+  let visited = set.insert(visited, visiting)
+
+  let to_visit =
+    adjacencies
+    |> dict.get(visiting)
+    |> result.unwrap(set.new())
+    |> set.fold(to_visit, fn(to_visit, neighbor) {
+      case set.contains(visited, neighbor) {
+        True -> to_visit
+        False -> [neighbor, ..to_visit]
       }
-    }
-  })
-  |> set.insert(cursor)
+    })
+
+  do_walk_circuit(adjacencies, to_visit, visited)
 }
 
 fn make_visit_queue(points: List(Point)) -> List(#(Point, Point)) {
