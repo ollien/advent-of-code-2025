@@ -8,7 +8,6 @@ import gleam/list
 import gleam/option
 import gleam/pair
 import gleam/result
-import gleam/set
 import gleam/string
 
 type Point {
@@ -32,7 +31,6 @@ fn run(input: String) -> Result(Nil, String) {
 fn part1(points: List(Point)) -> String {
   points
   |> build_circuits()
-  |> list.map(set.size)
   |> list.sort(int.compare)
   |> list.reverse()
   |> list.take(3)
@@ -50,56 +48,29 @@ fn part2(points: List(Point)) -> String {
   |> option.unwrap(or: "No solution fund")
 }
 
-fn build_circuits(points: List(Point)) -> List(set.Set(Point)) {
+fn build_circuits(points: List(Point)) -> List(Int) {
   let visit_queue = make_visit_queue(points)
 
-  do_build_circuits(visit_queue, num_circuits, dict.new())
+  do_build_circuits(visit_queue, num_circuits, new_unionfind())
 }
 
 fn do_build_circuits(
   visit_queue: List(#(Point, Point)),
   num_circuits: Int,
-  adjacencies: dict.Dict(Point, set.Set(Point)),
-) -> List(set.Set(Point)) {
-  use <- bool.lazy_guard(num_circuits == 0, return: fn() {
-    circuits_from_adjacencies(adjacencies)
-  })
-
-  use head, visit_queue <- try_pop(visit_queue, fn() {
-    circuits_from_adjacencies(adjacencies)
-  })
+  union_find: UnionFind(Point),
+) -> List(Int) {
+  use <- bool.lazy_guard(num_circuits == 0, fn() { set_sizes(union_find) })
+  use head, visit_queue <- try_pop(visit_queue, fn() { set_sizes(union_find) })
 
   let #(point1, point2) = head
 
-  let point1_neighbors =
-    adjacencies
-    |> dict.get(point1)
-    |> result.unwrap(or: set.new())
+  let union_find =
+    union_find
+    |> insert_new(point1)
+    |> insert_new(point2)
+    |> union(point1, point2)
 
-  let point2_neighbors =
-    adjacencies
-    |> dict.get(point2)
-    |> result.unwrap(or: set.new())
-
-  case
-    set.contains(point1_neighbors, point2)
-    || set.contains(point2_neighbors, point1)
-  {
-    True -> {
-      do_build_circuits(visit_queue, num_circuits, adjacencies)
-    }
-    False -> {
-      let point1_neighbors = set.insert(point1_neighbors, point2)
-      let point2_neighbors = set.insert(point2_neighbors, point1)
-
-      let adjacencies =
-        adjacencies
-        |> dict.insert(point1, point1_neighbors)
-        |> dict.insert(point2, point2_neighbors)
-
-      do_build_circuits(visit_queue, num_circuits - 1, adjacencies)
-    }
-  }
+  do_build_circuits(visit_queue, num_circuits - 1, union_find)
 }
 
 fn build_until_big_circuit(
@@ -107,126 +78,37 @@ fn build_until_big_circuit(
 ) -> option.Option(#(Point, Point)) {
   let visit_queue = make_visit_queue(points)
 
-  do_build_until_big_circuit(set.from_list(points), visit_queue, dict.new())
+  do_build_until_big_circuit(list.length(points), visit_queue, new_unionfind())
 }
 
 fn do_build_until_big_circuit(
-  points: set.Set(Point),
+  num_points: Int,
   visit_queue: List(#(Point, Point)),
-  adjacencies: dict.Dict(Point, set.Set(Point)),
+  union_find: UnionFind(Point),
 ) -> option.Option(#(Point, Point)) {
   use head, visit_queue <- try_pop(visit_queue, fn() { option.None })
 
   let #(point1, point2) = head
 
-  let point1_neighbors =
-    adjacencies
-    |> dict.get(point1)
-    |> result.unwrap(or: set.new())
+  let union_find =
+    union_find
+    |> insert_new(point1)
+    |> insert_new(point2)
+    |> union(point1, point2)
 
-  let point2_neighbors =
-    adjacencies
-    |> dict.get(point2)
-    |> result.unwrap(or: set.new())
-
-  use <- bool.lazy_guard(
-    set.contains(point1_neighbors, point2)
-      || set.contains(point2_neighbors, point1),
-    fn() { do_build_until_big_circuit(points, visit_queue, adjacencies) },
-  )
-
-  let point1_neighbors = set.insert(point1_neighbors, point2)
-  let point2_neighbors = set.insert(point2_neighbors, point1)
-
-  let adjacencies =
-    adjacencies
-    |> dict.insert(point1, point1_neighbors)
-    |> dict.insert(point2, point2_neighbors)
-
-  let circuit = walk_circuit(adjacencies, point1)
-  case circuit == points {
+  case num_sets(union_find) == 1 && set_sizes(union_find) == [num_points] {
     True -> option.Some(#(point1, point2))
-    False -> do_build_until_big_circuit(points, visit_queue, adjacencies)
+    False -> do_build_until_big_circuit(num_points, visit_queue, union_find)
   }
-}
-
-fn circuits_from_adjacencies(
-  adjacencies: dict.Dict(Point, set.Set(Point)),
-) -> List(set.Set(Point)) {
-  adjacencies
-  |> dict.to_list()
-  |> list.sort(fn(a, b) { int.compare(set.size(a.1), set.size(b.1)) })
-  |> list.reverse()
-  |> do_circuits_from_adjacencies(adjacencies, set.new())
-}
-
-fn do_circuits_from_adjacencies(
-  adjacency_queue: List(#(Point, set.Set(Point))),
-  adjacencies: dict.Dict(Point, set.Set(Point)),
-  visited: set.Set(Point),
-) -> List(set.Set(Point)) {
-  use head, adjacency_queue <- try_pop(adjacency_queue, fn() { [] })
-  use <- bool.lazy_guard(set.contains(visited, head.0), fn() {
-    do_circuits_from_adjacencies(adjacency_queue, adjacencies, visited)
-  })
-
-  let visited = set.insert(visited, head.0)
-  let circuit = walk_circuit(adjacencies, head.0)
-  let visited = set.union(visited, circuit)
-
-  [
-    circuit,
-    ..do_circuits_from_adjacencies(adjacency_queue, adjacencies, visited)
-  ]
-}
-
-fn walk_circuit(
-  adjacencies: dict.Dict(Point, set.Set(Point)),
-  start: Point,
-) -> set.Set(Point) {
-  do_walk_circuit(adjacencies, [start], set.new())
-}
-
-fn do_walk_circuit(
-  adjacencies: dict.Dict(Point, set.Set(Point)),
-  to_visit: List(Point),
-  visited: set.Set(Point),
-) -> set.Set(Point) {
-  use visiting, to_visit <- try_pop(to_visit, fn() { visited })
-
-  let visited = set.insert(visited, visiting)
-
-  let to_visit =
-    adjacencies
-    |> dict.get(visiting)
-    |> result.unwrap(set.new())
-    |> set.fold(to_visit, fn(to_visit, neighbor) {
-      case set.contains(visited, neighbor) {
-        True -> to_visit
-        False -> [neighbor, ..to_visit]
-      }
-    })
-
-  do_walk_circuit(adjacencies, to_visit, visited)
 }
 
 fn make_visit_queue(points: List(Point)) -> List(#(Point, Point)) {
   points
-  |> list.fold(dict.new(), fn(acc, point1) {
-    points
-    |> list.filter(fn(point2) { point2 != point1 })
-    |> list.map(fn(point2) {
-      #(pair.new(point1, point2), distance(point1, point2))
-    })
-    |> dict.from_list()
-    |> dict.combine(acc, fn(old, new) {
-      case old == new {
-        True -> new
-        False -> panic as "distances cannot be different"
-      }
-    })
+  |> list.combination_pairs()
+  |> list.filter(fn(points) { pair.first(points) != pair.second(points) })
+  |> list.map(fn(points) {
+    #(points, distance(pair.first(points), pair.second(points)))
   })
-  |> dict.to_list()
   |> list.sort(fn(a, b) { float.compare(a.1, b.1) })
   |> list.map(pair.first)
 }
@@ -278,4 +160,58 @@ fn parse_int(input: String) -> Result(Int, String) {
   input
   |> int.parse()
   |> result.map_error(fn(_: Nil) { "Malformed int '" <> input <> "'" })
+}
+
+type UnionFind(a) {
+  UnionFind(map: dict.Dict(a, a))
+}
+
+fn new_unionfind() -> UnionFind(a) {
+  UnionFind(map: dict.new())
+}
+
+fn num_sets(union_find: UnionFind(a)) -> Int {
+  union_find.map
+  |> dict.to_list()
+  |> list.count(fn(entry) { pair.first(entry) == pair.second(entry) })
+}
+
+fn set_sizes(union_find: UnionFind(a)) -> List(Int) {
+  union_find.map
+  |> dict.keys()
+  |> list.fold(dict.new(), fn(counts, key) {
+    let set = find(union_find, key)
+
+    let count = counts |> dict.get(set) |> result.unwrap(or: 0)
+    dict.insert(counts, set, count + 1)
+  })
+  |> dict.values()
+}
+
+fn insert_new(union_find: UnionFind(a), value: a) -> UnionFind(a) {
+  case dict.has_key(union_find.map, value) {
+    True -> union_find
+    False -> UnionFind(map: dict.insert(union_find.map, value, value))
+  }
+}
+
+fn union(union_find: UnionFind(a), value1: a, value2: a) -> UnionFind(a) {
+  let set1 = find(union_find, value1)
+  let set2 = find(union_find, value2)
+
+  case set1, set2 {
+    option.None, _set2 -> union_find
+    _set1, option.None -> union_find
+    option.Some(set1), option.Some(set2) -> {
+      UnionFind(map: dict.insert(union_find.map, set1, set2))
+    }
+  }
+}
+
+fn find(union_find: UnionFind(a), value: a) -> option.Option(a) {
+  case dict.get(union_find.map, value) {
+    Error(Nil) -> option.None
+    Ok(parent) if parent == value -> option.Some(parent)
+    Ok(parent) -> find(union_find, parent)
+  }
 }
