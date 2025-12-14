@@ -1,6 +1,7 @@
 import advent_of_code_2025
 import gleam/bool
 import gleam/dict
+import gleam/erlang/process
 import gleam/int
 import gleam/io
 import gleam/list
@@ -34,6 +35,11 @@ type Map {
 
 type LineSegment {
   LineSegment(a: Position, b: Position)
+}
+
+type WorkerMessage(a, b) {
+  Demand(process.Subject(a))
+  Result(b, Bool)
 }
 
 pub fn main() {
@@ -75,7 +81,10 @@ fn part2(positions: List(Position)) -> String {
 
     QuadRectangle(a: corner_a, b: corner_b, c: corner_c, d: corner_d)
   })
-  |> list.filter(fn(rectangle) { is_rectangle_eligible(map, rectangle) })
+  |> run_many_async(
+    fn(rectangle, map) { #(rectangle, is_rectangle_eligible(map, rectangle)) },
+    map,
+  )
   |> list.max(fn(rectangle1, rectangle2) {
     int.compare(
       area(rectangle1.a, rectangle1.d),
@@ -84,6 +93,110 @@ fn part2(positions: List(Position)) -> String {
   })
   |> result.map(fn(rectangle) { int.to_string(area(rectangle.a, rectangle.d)) })
   |> result.unwrap(or: "No solution found")
+}
+
+fn run_many_async(
+  task_args: List(a),
+  task_fn: fn(a, c) -> #(b, Bool),
+  task_data: c,
+) -> List(b) {
+  let result_subject = process.new_subject()
+  let demand_subject = process.new_subject()
+
+  let num_tasks = int.min(num_schedulers(), list.length(task_args))
+  list.each(list.range(1, num_tasks), fn(_n) {
+    process.spawn(fn() {
+      let work_subject = process.new_subject()
+      worker(work_subject, demand_subject, result_subject, task_fn, task_data)
+    })
+  })
+
+  divide_work(task_args, demand_subject, result_subject, 0, [])
+}
+
+fn worker(
+  work_subject: process.Subject(a),
+  demand_subject: process.Subject(process.Subject(a)),
+  result_subject: process.Subject(b),
+  task_fn: fn(a, c) -> b,
+  task_data: c,
+) -> Nil {
+  process.send(demand_subject, work_subject)
+  let work_selector = process.select(process.new_selector(), work_subject)
+  let task_arg = process.selector_receive_forever(work_selector)
+
+  let result = task_fn(task_arg, task_data)
+  process.send(result_subject, result)
+
+  worker(work_subject, demand_subject, result_subject, task_fn, task_data)
+}
+
+fn divide_work(
+  work: List(a),
+  demand_subject: process.Subject(process.Subject(a)),
+  result_subject: process.Subject(#(b, Bool)),
+  outstanding_tasks: Int,
+  results: List(b),
+) -> List(b) {
+  let selector =
+    process.new_selector()
+    |> process.select_map(demand_subject, Demand)
+    |> process.select_map(result_subject, fn(entry: #(b, Bool)) {
+      Result(entry.0, entry.1)
+    })
+
+  let msg = process.selector_receive_forever(selector)
+  case work, msg {
+    [], Demand(_subject) -> {
+      divide_work(
+        work,
+        demand_subject,
+        result_subject,
+        outstanding_tasks,
+        results,
+      )
+    }
+
+    [next_work, ..rest_work], Demand(subject) -> {
+      process.send(subject, next_work)
+      divide_work(
+        rest_work,
+        demand_subject,
+        result_subject,
+        outstanding_tasks + 1,
+        results,
+      )
+    }
+
+    [], Result(_answer, False) if outstanding_tasks <= 1 -> {
+      results
+    }
+
+    [], Result(answer, True) if outstanding_tasks <= 1 -> {
+      [answer, ..results]
+    }
+
+    _work, Result(_answer, False) -> {
+      divide_work(
+        work,
+        demand_subject,
+        result_subject,
+        outstanding_tasks - 1,
+        results,
+      )
+    }
+
+    _work, Result(answer, True) -> {
+      let results = [answer, ..results]
+      divide_work(
+        work,
+        demand_subject,
+        result_subject,
+        outstanding_tasks - 1,
+        results,
+      )
+    }
+  }
 }
 
 fn build_map(positions: List(Position)) -> Result(Map, String) {
@@ -314,3 +427,6 @@ fn parse_int(input: String) -> Result(Int, String) {
   |> int.parse()
   |> result.map_error(fn(_: Nil) { "Malformed int '" <> input <> "'" })
 }
+
+@external(erlang, "day9_ffi", "num_schedulers")
+fn num_schedulers() -> Int
