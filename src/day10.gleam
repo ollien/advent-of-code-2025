@@ -18,7 +18,7 @@ import gleam/string
 const epsilon = 0.000001
 
 type ButtonConfig {
-  ButtonConfig(light_toggles: List(Int))
+  ButtonConfig(slot_index: List(Int))
 }
 
 type LightConfig {
@@ -175,7 +175,7 @@ fn apply_button_config(
   lights: Lights,
   button_config: ButtonConfig,
 ) -> Result(Lights, Nil) {
-  list.try_fold(button_config.light_toggles, lights, fn(lights, idx) {
+  list.try_fold(button_config.slot_index, lights, fn(lights, idx) {
     toggle_light(lights, idx)
   })
 }
@@ -247,7 +247,7 @@ fn joltage_matrix(entry: ManualEntry) -> Result(Matrix, String) {
 }
 
 fn button_toggles_index(button: ButtonConfig, index: Int) -> Bool {
-  list.any(button.light_toggles, fn(toggle_index) { index == toggle_index })
+  list.any(button.slot_index, fn(toggle_index) { index == toggle_index })
 }
 
 fn free_variable_indices(rref_matrix: Matrix) -> Result(List(Int), String) {
