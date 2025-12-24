@@ -2,6 +2,7 @@ import advent_of_code_2025
 import gleam/bool
 import gleam/deque
 import gleam/dict
+import gleam/erlang/process
 import gleam/float
 import gleam/function
 import gleam/int
@@ -9,6 +10,7 @@ import gleam/io
 import gleam/list
 import gleam/option
 import gleam/order
+import gleam/otp/actor
 import gleam/pair
 import gleam/regexp
 import gleam/result
@@ -70,6 +72,13 @@ type IndexedButton {
   IndexedButton(button: ButtonConfig, index: Int)
 }
 
+type ActorTask {
+  ActorTask(
+    entry: ManualEntry,
+    reply_subject: process.Subject(Result(Int, String)),
+  )
+}
+
 pub fn main() {
   advent_of_code_2025.run_with_input_file(run)
 }
@@ -94,19 +103,39 @@ fn part1(entries: List(ManualEntry)) -> String {
 }
 
 fn part2(entries: List(ManualEntry)) -> String {
-  let res =
+  let answer_subject = process.new_subject()
+
+  list.each(entries, fn(entry) {
+    let assert Ok(actor) = make_task_actor()
+    actor.send(actor.data, ActorTask(reply_subject: answer_subject, entry:))
+  })
+
+  let answers =
     entries
-    |> list.try_map(find_joltage_config_path_length)
+    |> list.try_map(fn(_entry) { process.receive_forever(answer_subject) })
     |> result.map(fn(path) {
       path
       |> int.sum()
       |> int.to_string()
     })
 
-  case res {
+  case answers {
     Ok(result) -> result
     Error(message) -> "Failed to solve - " <> message
   }
+}
+
+fn make_task_actor() -> Result(
+  actor.Started(process.Subject(ActorTask)),
+  actor.StartError,
+) {
+  actor.new(Nil)
+  |> actor.on_message(fn(_: Nil, message: ActorTask) {
+    let answer = find_joltage_config_path_length(message.entry)
+    actor.send(message.reply_subject, answer)
+    actor.stop()
+  })
+  |> actor.start()
 }
 
 fn find_light_config_path_length(entry: ManualEntry) -> Result(Int, Nil) {
