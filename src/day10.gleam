@@ -375,59 +375,51 @@ fn brute_force_free_variables(
   equations: List(Equation),
   free_variable_indices: List(Int),
 ) -> option.Option(Int) {
-  let min_joltage =
-    list.max(manual_entry.joltage_requirements, order.reverse(int.compare))
+  // The worst upper bound is the maximum joltage across the board
+  let max_joltage =
+    list.max(manual_entry.joltage_requirements, int.compare)
     |> result.unwrap(or: 0)
-
-  let max_constant =
-    equations
-    |> list.flat_map(fn(equation) {
-      list.filter_map(equation.dependencies, fn(dep) {
-        case dep {
-          Constant(n) -> Ok(float.truncate(float.ceiling(n)))
-          _other -> Error(Nil)
-        }
-      })
-    })
-    |> list.max(int.compare)
-    |> result.unwrap(or: 0)
-
-  let search_depth = min_joltage + max_constant
 
   let joltage_slots = map_buttons_to_slots(manual_entry, equations)
+  let min_joltage_by_button = min_joltage_by_free_button(joltage_slots)
+  // ...but can be reduced to the minimum joltage that each button effects
+  let free_variable_bounds =
+    list.map(free_variable_indices, fn(index) {
+      min_joltage_by_button
+      |> dict.get(index)
+      |> result.unwrap(or: max_joltage)
+    })
 
-  brute_force_minimum(
-    list.length(free_variable_indices),
-    search_depth,
-    fn(values) {
-      let variable_values =
-        free_variable_indices
-        |> list.zip(list.map(values, int.to_float))
-        |> dict.from_list()
+  brute_force_minimum(free_variable_bounds, fn(values) {
+    let variable_values =
+      free_variable_indices
+      |> list.zip(list.map(values, int.to_float))
+      |> dict.from_list()
 
-      presses_to_make_joltages(joltage_slots, variable_values)
-    },
-  )
+    presses_to_make_joltages(joltage_slots, variable_values)
+  })
 }
 
 fn brute_force_minimum(
-  num_values: Int,
-  attempts: Int,
+  search_depths: List(Int),
   make_value: fn(List(Int)) -> option.Option(Int),
 ) -> option.Option(Int) {
-  do_brute_force_minimum(num_values, attempts, make_value, [], option.None)
+  do_brute_force_minimum(search_depths, make_value, [], option.None)
 }
 
 fn do_brute_force_minimum(
-  num_values: Int,
-  attempts: Int,
+  search_depths: List(Int),
   make_value: fn(List(Int)) -> option.Option(Int),
   values: List(Int),
   min: option.Option(Int),
 ) -> option.Option(Int) {
-  case num_values {
-    0 -> {
-      let res = make_value(values)
+  case search_depths {
+    [] -> {
+      let res =
+        // Pass the values in in the same order we got the depths to ensure consistency
+        values
+        |> list.reverse()
+        |> make_value()
       case res, min {
         option.None, option.None -> option.None
         option.None, option.Some(min) -> option.Some(min)
@@ -437,16 +429,11 @@ fn do_brute_force_minimum(
         }
       }
     }
-    num_values -> {
-      list.range(0, attempts)
+
+    [depth, ..rest_depths] -> {
+      list.range(0, depth)
       |> list.fold(min, fn(min, value) {
-        do_brute_force_minimum(
-          num_values - 1,
-          attempts,
-          make_value,
-          [value, ..values],
-          min,
-        )
+        do_brute_force_minimum(rest_depths, make_value, [value, ..values], min)
       })
     }
   }
@@ -530,19 +517,19 @@ fn do_pair_equations_to_buttons(
   }
 }
 
-// fn variables_satisfy_joltages(
-//   manual_entry: ManualEntry,
-//   free_variables: List(Int),
-//   equations: List(Equation),
-// ) {
-//
-// }
-//
-// fn do_variables_satisfy_joltages(
-// manual_entry: ManualEntry,
-// free_variables: List(Int),
-// equations: List(#(Equation, Button)),
-// )
+fn min_joltage_by_free_button(joltage_slots: List(JoltageSlot)) {
+  joltage_slots
+  |> list.fold(dict.new(), fn(acc, slot) {
+    list.fold(slot.free_buttons, acc, fn(acc, button) {
+      let min_joltage = case dict.get(acc, button.index) {
+        Ok(min) -> int.min(slot.required_joltage, min)
+        Error(Nil) -> slot.required_joltage
+      }
+
+      dict.insert(acc, button.index, min_joltage)
+    })
+  })
+}
 
 fn presses_to_make_joltages(
   slots: List(JoltageSlot),
