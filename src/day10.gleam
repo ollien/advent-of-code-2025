@@ -2,7 +2,6 @@ import advent_of_code_2025
 import gleam/bool
 import gleam/deque
 import gleam/dict
-import gleam/erlang/atom
 import gleam/float
 import gleam/function
 import gleam/int
@@ -15,7 +14,6 @@ import gleam/regexp
 import gleam/result
 import gleam/set
 import gleam/string
-import pocket_watch
 
 const epsilon = 0.000001
 
@@ -58,6 +56,18 @@ type EquationComponent {
 
 type Equation {
   Equation(variable_index: Int, dependencies: List(EquationComponent))
+}
+
+type JoltageSlot {
+  JoltageSlot(
+    required_joltage: Int,
+    equation_buttons: List(#(IndexedButton, Equation)),
+    free_buttons: List(IndexedButton),
+  )
+}
+
+type IndexedButton {
+  IndexedButton(button: ButtonConfig, index: Int)
 }
 
 pub fn main() {
@@ -365,60 +375,37 @@ fn brute_force_free_variables(
   equations: List(Equation),
   free_variable_indices: List(Int),
 ) -> option.Option(Int) {
-  let search_depth =
-    list.max(manual_entry.joltage_requirements, int.compare)
+  let min_joltage =
+    list.max(manual_entry.joltage_requirements, order.reverse(int.compare))
     |> result.unwrap(or: 0)
+
+  let max_constant =
+    equations
+    |> list.flat_map(fn(equation) {
+      list.filter_map(equation.dependencies, fn(dep) {
+        case dep {
+          Constant(n) -> Ok(float.truncate(float.ceiling(n)))
+          _other -> Error(Nil)
+        }
+      })
+    })
+    |> list.max(int.compare)
+    |> result.unwrap(or: 0)
+
+  let search_depth = min_joltage + max_constant
+
+  let joltage_slots = map_buttons_to_slots(manual_entry, equations)
 
   brute_force_minimum(
     list.length(free_variable_indices),
     search_depth,
-    fn(values, current_min) {
-      let free_variable_values =
-        free_variable_indices
-        |> list.zip(list.map(values, int.to_float))
-        |> list.sort(fn(a, b) { int.compare(pair.first(a), pair.first(b)) })
-        |> list.map(pair.second)
-
+    fn(values) {
       let variable_values =
         free_variable_indices
         |> list.zip(list.map(values, int.to_float))
         |> dict.from_list()
 
-      let button_presses =
-        equations
-        |> list.map(fn(equation) {
-          let value = plug_into_equation(equation, free_variable_values)
-
-          #(equation.variable_index, value)
-        })
-        |> list.fold(variable_values, fn(variable_values, entry) {
-          let #(variable_index, value) = entry
-          dict.insert(variable_values, variable_index, value)
-        })
-
-      let presses_possible =
-        !{
-          button_presses
-          |> dict.values()
-          |> list.any(fn(value) { value <. 0.0 && value == float.floor(value) })
-        }
-      let int_button_presses =
-        dict.map_values(button_presses, fn(_k, v) { float.round(v) })
-
-      let candidate = int.sum(dict.values(int_button_presses))
-
-      case
-        presses_possible
-        && can_make_joltages_with_button_presses(
-          manual_entry,
-          int_button_presses,
-        )
-      {
-        True -> {
-          option.Some(candidate)
-        }
-        False -> option.None
-      }
+      presses_to_make_joltages(joltage_slots, variable_values)
     },
   )
 }
@@ -426,7 +413,7 @@ fn brute_force_free_variables(
 fn brute_force_minimum(
   num_values: Int,
   attempts: Int,
-  make_value: fn(List(Int), option.Option(Int)) -> option.Option(Int),
+  make_value: fn(List(Int)) -> option.Option(Int),
 ) -> option.Option(Int) {
   do_brute_force_minimum(num_values, attempts, make_value, [], option.None)
 }
@@ -434,13 +421,13 @@ fn brute_force_minimum(
 fn do_brute_force_minimum(
   num_values: Int,
   attempts: Int,
-  make_value: fn(List(Int), option.Option(Int)) -> option.Option(Int),
+  make_value: fn(List(Int)) -> option.Option(Int),
   values: List(Int),
   min: option.Option(Int),
 ) -> option.Option(Int) {
   case num_values {
     0 -> {
-      let res = make_value(values, min)
+      let res = make_value(values)
       case res, min {
         option.None, option.None -> option.None
         option.None, option.Some(min) -> option.Some(min)
@@ -483,41 +470,146 @@ fn plug_into_equation(equation: Equation, variables: List(Float)) -> Float {
   result
 }
 
-fn can_make_joltages_with_button_presses(
+fn map_buttons_to_slots(
   manual_entry: ManualEntry,
-  button_presses: dict.Dict(Int, Int),
-) -> Bool {
-  let buttons =
-    manual_entry.buttons
-    |> list.index_map(fn(button, index) { #(index, button) })
-    |> dict.from_list()
+  equations: List(Equation),
+) -> List(JoltageSlot) {
+  let pairings = pair_equations_to_buttons(manual_entry.buttons, equations)
 
-  let expected_joltages =
-    manual_entry.joltage_requirements
-    |> list.index_map(fn(button, index) { #(index, button) })
-    |> dict.from_list()
+  list.index_map(manual_entry.joltage_requirements, fn(joltage, joltage_index) {
+    list.index_fold(
+      pairings,
+      JoltageSlot(
+        required_joltage: joltage,
+        equation_buttons: [],
+        free_buttons: [],
+      ),
+      fn(slot, pair, pair_index) {
+        let #(button, maybe_equation) = pair
+        use <- bool.guard(!button_toggles_index(button, joltage_index), slot)
 
-  let produced_joltages =
-    list.fold(
-      dict.to_list(button_presses),
-      dict.new(),
-      fn(produced_joltages, button_press) {
-        let #(button_index, times) = button_press
-        let assert Ok(button) = dict.get(buttons, button_index)
-        list.fold(
-          button.light_toggles,
-          produced_joltages,
-          fn(produced_joltages, slot_index) {
-            let current =
-              dict.get(produced_joltages, slot_index) |> result.unwrap(or: 0)
-
-            dict.insert(produced_joltages, slot_index, current + times)
-          },
-        )
+        let indexed_button = IndexedButton(button:, index: pair_index)
+        case maybe_equation {
+          option.Some(equation) ->
+            JoltageSlot(..slot, equation_buttons: [
+              #(indexed_button, equation),
+              ..slot.equation_buttons
+            ])
+          option.None ->
+            JoltageSlot(..slot, free_buttons: [
+              indexed_button,
+              ..slot.free_buttons
+            ])
+        }
       },
     )
+  })
+}
 
-  produced_joltages == expected_joltages
+fn pair_equations_to_buttons(
+  buttons: List(ButtonConfig),
+  equations: List(Equation),
+) -> List(#(ButtonConfig, option.Option(Equation))) {
+  do_pair_equations_to_buttons(buttons, 0, equations)
+}
+
+fn do_pair_equations_to_buttons(
+  buttons: List(ButtonConfig),
+  index: Int,
+  equations: List(Equation),
+) -> List(#(ButtonConfig, option.Option(Equation))) {
+  use button, buttons <- try_pop(buttons, [])
+
+  let find_equation_res =
+    list.find(equations, fn(equation) { equation.variable_index == index })
+
+  let other_pairs = do_pair_equations_to_buttons(buttons, index + 1, equations)
+  case find_equation_res {
+    Ok(equation) -> [#(button, option.Some(equation)), ..other_pairs]
+    Error(Nil) -> [#(button, option.None), ..other_pairs]
+  }
+}
+
+// fn variables_satisfy_joltages(
+//   manual_entry: ManualEntry,
+//   free_variables: List(Int),
+//   equations: List(Equation),
+// ) {
+//
+// }
+//
+// fn do_variables_satisfy_joltages(
+// manual_entry: ManualEntry,
+// free_variables: List(Int),
+// equations: List(#(Equation, Button)),
+// )
+
+fn presses_to_make_joltages(
+  slots: List(JoltageSlot),
+  free_variables: dict.Dict(Int, Float),
+) -> option.Option(Int) {
+  let ordered_free_vars =
+    free_variables
+    |> dict.to_list()
+    |> list.sort(fn(a, b) { int.compare(pair.first(a), pair.first(b)) })
+    |> list.map(pair.second)
+
+  slots
+  |> list.fold_until(option.Some(dict.new()), fn(acc, slot) {
+    // We don't have None in the acc, this is just used as the final result
+    let assert option.Some(presses_by_index) = acc
+    let free_presses =
+      slot.free_buttons
+      |> list.map(fn(indexed_button) {
+        let assert Ok(value) = dict.get(free_variables, indexed_button.index)
+
+        #(indexed_button, value)
+      })
+
+    let local_presses =
+      slot.equation_buttons
+      |> list.map(fn(entry) {
+        let #(indexed_button, equation) = entry
+        #(indexed_button, plug_into_equation(equation, ordered_free_vars))
+      })
+      |> list.append(free_presses)
+      |> dict.from_list()
+
+    let joltage = float.sum(dict.values(local_presses))
+    let presses_valid =
+      local_presses
+      |> dict.values()
+      |> list.all(fn(value) {
+        normalize_values(value) >=. 0.0
+        && normalize_values(value) == float.floor(value)
+      })
+
+    let is_joltage =
+      float.loosely_equals(
+        joltage,
+        int.to_float(slot.required_joltage),
+        epsilon,
+      )
+
+    case is_joltage && presses_valid {
+      False -> list.Stop(option.None)
+      True -> {
+        let combined =
+          dict.combine(local_presses, presses_by_index, fn(a, b) {
+            assert a == b
+            a
+          })
+
+        list.Continue(option.Some(combined))
+      }
+    }
+  })
+  |> option.map(fn(presses) {
+    presses
+    |> dict.values()
+    |> float.sum()
+    |> float.truncate()
+  })
 }
 
 fn new_matrix(rows: List(List(Float))) -> Result(Matrix, Nil) {
@@ -728,6 +820,8 @@ fn ok_or(option: option.Option(a), or: b, continue: fn(a) -> b) -> b {
 }
 
 fn normalize_values(n: Float) -> Float {
+  use <- bool.guard(float.loosely_equals(0.0, n, epsilon), 0.0)
+
   use <- bool.guard(
     float.loosely_equals(float.floor(n), n, epsilon),
     float.floor(n),
@@ -757,6 +851,13 @@ fn print_matrix(matrix: Matrix) -> Nil {
   })
 
   io.println("")
+}
+
+fn try_pop(list: List(a), or: b, continue continue: fn(a, List(a)) -> b) -> b {
+  case list {
+    [] -> or
+    [head, ..rest] -> continue(head, rest)
+  }
 }
 
 fn parse_input(input: String) -> Result(List(ManualEntry), String) {
