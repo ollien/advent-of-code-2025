@@ -94,14 +94,19 @@ fn part1(entries: List(ManualEntry)) -> String {
 }
 
 fn part2(entries: List(ManualEntry)) -> String {
-  entries
-  |> list.try_map(find_joltage_config_path_length)
-  |> result.map(fn(path) {
-    path
-    |> int.sum()
-    |> int.to_string()
-  })
-  |> result.unwrap(or: "No result found")
+  let res =
+    entries
+    |> list.try_map(find_joltage_config_path_length)
+    |> result.map(fn(path) {
+      path
+      |> int.sum()
+      |> int.to_string()
+    })
+
+  case res {
+    Ok(result) -> result
+    Error(message) -> "Failed to solve - " <> message
+  }
 }
 
 fn find_light_config_path_length(entry: ManualEntry) -> Result(Int, Nil) {
@@ -197,60 +202,71 @@ fn try_pop_front(
   }
 }
 
-fn find_joltage_config_path_length(entry: ManualEntry) -> Result(Int, Nil) {
-  let matrix = joltage_matrix(entry)
-  let rref = rref(matrix)
-  let free_variables = free_variable_indices(rref)
+fn find_joltage_config_path_length(entry: ManualEntry) -> Result(Int, String) {
+  use matrix <- result.try(joltage_matrix(entry))
+  use rref <- result.try(rref(matrix))
+  use free_variables <- result.try(free_variable_indices(rref))
   let equations =
     rref
     |> build_equations()
     |> normalize_equations(free_variables)
 
   brute_force_free_variables(entry, equations, free_variables)
-  |> option.to_result(Nil)
+  |> result.try(fn(maybe_answer) {
+    option.to_result(maybe_answer, "No solution found")
+  })
 }
 
-fn joltage_matrix(entry: ManualEntry) -> Matrix {
+fn joltage_matrix(entry: ManualEntry) -> Result(Matrix, String) {
   // Can't fail unless we have a malformed input
-  let assert Ok(matrix) =
-    entry.joltage_requirements
-    |> list.index_map(fn(joltage, index) {
-      let applicable_buttons =
-        entry.buttons
-        |> list.index_map(fn(button, button_index) {
-          case button_toggles_index(button, index) {
-            True -> Ok(button_index)
-            False -> Error(Nil)
-          }
-        })
-        |> list.filter_map(function.identity)
-
-      list.range(0, list.length(entry.buttons) - 1)
-      |> list.map(fn(column) {
-        case list.contains(applicable_buttons, column) {
-          True -> 1.0
-          False -> 0.0
+  entry.joltage_requirements
+  |> list.index_map(fn(joltage, index) {
+    let applicable_buttons =
+      entry.buttons
+      |> list.index_map(fn(button, button_index) {
+        case button_toggles_index(button, index) {
+          True -> Ok(button_index)
+          False -> Error(Nil)
         }
       })
-      |> list.append([int.to_float(joltage)])
-    })
-    |> new_matrix()
+      |> list.filter_map(function.identity)
 
-  matrix
+    list.range(0, list.length(entry.buttons) - 1)
+    |> list.map(fn(column) {
+      case list.contains(applicable_buttons, column) {
+        True -> 1.0
+        False -> 0.0
+      }
+    })
+    |> list.append([int.to_float(joltage)])
+  })
+  |> new_matrix()
+  |> result.map_error(fn(_: Nil) {
+    "Input does not produce a set of matrix equations"
+  })
 }
 
 fn button_toggles_index(button: ButtonConfig, index: Int) -> Bool {
   list.any(button.light_toggles, fn(toggle_index) { index == toggle_index })
 }
 
-fn free_variable_indices(rref_matrix: Matrix) -> List(Int) {
+fn free_variable_indices(rref_matrix: Matrix) -> Result(List(Int), String) {
   rref_matrix
-  |> map_rows(fn(row) {
-    let assert Ok(free_indices) = free_variable_index(row)
-    free_indices
+  |> try_map_rows(fn(row) {
+    row
+    |> free_variable_index()
+    |> result.map_error(fn(_: Nil) {
+      let string_row = list.map(row, float.to_string)
+      let display_row = "[" <> string.join(string_row, ", ") <> "]"
+
+      "row is not in rref: " <> display_row
+    })
   })
-  |> list.flatten()
-  |> list.unique()
+  |> result.map(fn(free_vars) {
+    free_vars
+    |> list.flatten()
+    |> list.unique()
+  })
 }
 
 fn free_variable_index(rref_row: List(Float)) -> Result(List(Int), Nil) {
@@ -374,7 +390,7 @@ fn brute_force_free_variables(
   manual_entry: ManualEntry,
   equations: List(Equation),
   free_variable_indices: List(Int),
-) -> option.Option(Int) {
+) -> Result(option.Option(Int), String) {
   // The worst upper bound is the maximum joltage across the board
   let max_joltage =
     list.max(manual_entry.joltage_requirements, int.compare)
@@ -402,17 +418,17 @@ fn brute_force_free_variables(
 
 fn brute_force_minimum(
   search_depths: List(Int),
-  make_value: fn(List(Int)) -> option.Option(Int),
-) -> option.Option(Int) {
+  make_value: fn(List(Int)) -> Result(option.Option(Int), String),
+) -> Result(option.Option(Int), String) {
   do_brute_force_minimum(search_depths, make_value, [], option.None)
 }
 
 fn do_brute_force_minimum(
   search_depths: List(Int),
-  make_value: fn(List(Int)) -> option.Option(Int),
+  make_value: fn(List(Int)) -> Result(option.Option(Int), String),
   values: List(Int),
   min: option.Option(Int),
-) -> option.Option(Int) {
+) -> Result(option.Option(Int), String) {
   case search_depths {
     [] -> {
       let res =
@@ -420,41 +436,53 @@ fn do_brute_force_minimum(
         values
         |> list.reverse()
         |> make_value()
-      case res, min {
-        option.None, option.None -> option.None
-        option.None, option.Some(min) -> option.Some(min)
-        option.Some(res), option.None -> option.Some(res)
+      use maybe_value <- result.try(res)
+      case maybe_value, min {
+        option.None, option.None -> Ok(option.None)
+        option.None, option.Some(min) -> Ok(option.Some(min))
+        option.Some(res), option.None -> Ok(option.Some(res))
         option.Some(res), option.Some(min) -> {
-          option.Some(int.min(res, min))
+          Ok(option.Some(int.min(res, min)))
         }
       }
     }
 
     [depth, ..rest_depths] -> {
       list.range(0, depth)
-      |> list.fold(min, fn(min, value) {
+      |> list.try_fold(min, fn(min, value) {
         do_brute_force_minimum(rest_depths, make_value, [value, ..values], min)
       })
     }
   }
 }
 
-fn plug_into_equation(equation: Equation, variables: List(Float)) -> Float {
-  let assert #([], result) =
+fn plug_into_equation(
+  equation: Equation,
+  variables: List(Float),
+) -> Result(Float, String) {
+  let result =
     equation.dependencies
-    |> list.fold(#(variables, 0.0), fn(acc, component) {
+    |> list.try_fold(#(variables, 0.0), fn(acc, component) {
       let #(variables, n) = acc
 
       case component {
-        Constant(value) -> #(variables, n +. value)
+        Constant(value) -> Ok(#(variables, n +. value))
         Variable(coefficient:, ..) -> {
-          let assert [variable, ..rest] = variables
-          #(rest, normalize_values(n +. variable *. coefficient))
+          use variable, rest <- try_pop(
+            variables,
+            Error("Insufficient variables for equation"),
+          )
+
+          Ok(#(rest, normalize_values(n +. variable *. coefficient)))
         }
       }
     })
 
-  result
+  case result {
+    Ok(#([], answer)) -> Ok(answer)
+    Ok(#(_, _answer)) -> Error("Too many variables for equation")
+    Error(error) -> Error(error)
+  }
 }
 
 fn map_buttons_to_slots(
@@ -534,7 +562,7 @@ fn min_joltage_by_free_button(joltage_slots: List(JoltageSlot)) {
 fn presses_to_make_joltages(
   slots: List(JoltageSlot),
   free_variables: dict.Dict(Int, Float),
-) -> option.Option(Int) {
+) -> Result(option.Option(Int), String) {
   let ordered_free_vars =
     free_variables
     |> dict.to_list()
@@ -542,25 +570,40 @@ fn presses_to_make_joltages(
     |> list.map(pair.second)
 
   slots
-  |> list.fold_until(option.Some(dict.new()), fn(acc, slot) {
-    // We don't have None in the acc, this is just used as the final result
-    let assert option.Some(presses_by_index) = acc
-    let free_presses =
+  |> list.fold_until(Ok(option.Some(dict.new())), fn(acc, slot) {
+    // We don't have None or Error in the acc, this is just used as the final result
+    let assert Ok(option.Some(presses_by_index)) = acc
+    let free_presses_res =
       slot.free_buttons
-      |> list.map(fn(indexed_button) {
-        let assert Ok(value) = dict.get(free_variables, indexed_button.index)
+      |> list.try_map(fn(indexed_button) {
+        use value <- result.try(
+          free_variables
+          |> dict.get(indexed_button.index)
+          |> result.map_error(fn(_: Nil) {
+            "no corresponding free variable for button "
+            <> int.to_string(indexed_button.index)
+          }),
+        )
 
-        #(indexed_button, value)
+        Ok(#(indexed_button, value))
       })
 
-    let local_presses =
+    use free_presses <- try_or_stop(free_presses_res)
+
+    let local_presses_res =
       slot.equation_buttons
-      |> list.map(fn(entry) {
+      |> list.try_map(fn(entry) {
         let #(indexed_button, equation) = entry
-        #(indexed_button, plug_into_equation(equation, ordered_free_vars))
+        plug_into_equation(equation, ordered_free_vars)
+        |> result.map(fn(solve_result) { #(indexed_button, solve_result) })
       })
-      |> list.append(free_presses)
-      |> dict.from_list()
+      |> result.map(fn(equation_presses) {
+        equation_presses
+        |> list.append(free_presses)
+        |> dict.from_list()
+      })
+
+    use local_presses <- try_or_stop(local_presses_res)
 
     let joltage = float.sum(dict.values(local_presses))
     let presses_valid =
@@ -579,7 +622,7 @@ fn presses_to_make_joltages(
       )
 
     case is_joltage && presses_valid {
-      False -> list.Stop(option.None)
+      False -> list.Stop(Ok(option.None))
       True -> {
         let combined =
           dict.combine(local_presses, presses_by_index, fn(a, b) {
@@ -587,15 +630,17 @@ fn presses_to_make_joltages(
             a
           })
 
-        list.Continue(option.Some(combined))
+        list.Continue(Ok(option.Some(combined)))
       }
     }
   })
-  |> option.map(fn(presses) {
-    presses
-    |> dict.values()
-    |> float.sum()
-    |> float.truncate()
+  |> result.map(fn(outcome) {
+    option.map(outcome, fn(presses) {
+      presses
+      |> dict.values()
+      |> float.sum()
+      |> float.truncate()
+    })
   })
 }
 
@@ -630,21 +675,29 @@ fn column_dimension(rows: List(List(Float))) -> Result(Int, Nil) {
 }
 
 // Adaptation of this algorithm https://rosettacode.org/wiki/Reduced_row_echelon_form#Common_Lisp
-fn rref(matrix: Matrix) -> Matrix {
+fn rref(matrix: Matrix) -> Result(Matrix, String) {
   do_rref(matrix, 0, 0)
 }
 
-fn do_rref(matrix: Matrix, current_row: Int, pivot_col: Int) -> Matrix {
+fn do_rref(
+  matrix: Matrix,
+  current_row: Int,
+  pivot_col: Int,
+) -> Result(Matrix, String) {
   use <- bool.guard(
     current_row >= matrix.rows || pivot_col >= matrix.columns,
-    return: matrix,
+    return: Ok(matrix),
   )
 
-  use #(pivot_row, pivot_col) <- ok_or(
-    find_pivot_position(matrix, current_row, pivot_col),
+  use maybe_pivot_position <- result.try(find_pivot_position(
     matrix,
-  )
+    current_row,
+    pivot_col,
+  ))
 
+  use #(pivot_row, pivot_col) <- some_or(maybe_pivot_position, Ok(matrix))
+
+  // The asserts in this function must be true because we do our bounds checks already
   let assert Ok(matrix) = swap_rows(matrix, pivot_row, current_row)
   let assert Ok(pivot) = dict.get(matrix.entries, #(current_row, pivot_col))
   let matrix = case pivot {
@@ -683,6 +736,7 @@ fn swap_rows(matrix: Matrix, row1: Int, row2: Int) -> Result(Matrix, Nil) {
   let row1_entries =
     list.range(0, matrix.columns - 1)
     |> list.map(fn(column) {
+      // Already guaranteed to be true by the guard
       let assert Ok(value) = dict.get(matrix.entries, #(row1, column))
 
       #(#(row1, column), value)
@@ -691,6 +745,7 @@ fn swap_rows(matrix: Matrix, row1: Int, row2: Int) -> Result(Matrix, Nil) {
   let row2_entries =
     list.range(0, matrix.columns - 1)
     |> list.map(fn(column) {
+      // Already guaranteed to be true by the guard
       let assert Ok(value) = dict.get(matrix.entries, #(row2, column))
 
       #(#(row2, column), value)
@@ -715,7 +770,7 @@ fn find_pivot_position(
   matrix: Matrix,
   current_row: Int,
   current_pivot_col: Int,
-) -> option.Option(#(Int, Int)) {
+) -> Result(option.Option(#(Int, Int)), String) {
   do_find_pivot_position(matrix, current_row, current_row, current_pivot_col)
 }
 
@@ -724,7 +779,31 @@ fn do_find_pivot_position(
   current_row: Int,
   current_pivot_row: Int,
   current_pivot_col: Int,
-) -> option.Option(#(Int, Int)) {
+) -> Result(option.Option(#(Int, Int)), String) {
+  use <- bool.guard(
+    current_row < 0 || current_row >= matrix.rows,
+    Error(
+      "cannot find pivot position in out of bounds row "
+      <> int.to_string(current_row),
+    ),
+  )
+
+  use <- bool.guard(
+    current_pivot_row < 0 || current_pivot_row >= matrix.rows,
+    Error(
+      "cannot find pivot position in out of bounds pivot row "
+      <> int.to_string(current_pivot_row),
+    ),
+  )
+
+  use <- bool.guard(
+    current_pivot_col < 0 && current_pivot_col >= matrix.columns,
+    Error(
+      "cannot find pivot position in out of bounds pivot col "
+      <> int.to_string(current_pivot_col),
+    ),
+  )
+
   let assert Ok(value) =
     dict.get(matrix.entries, #(current_pivot_row, current_pivot_col))
 
@@ -733,7 +812,7 @@ fn do_find_pivot_position(
       if current_pivot_row == matrix.rows - 1
       && current_pivot_col == matrix.columns - 1
     -> {
-      option.None
+      Ok(option.None)
     }
 
     True if current_pivot_row == matrix.rows - 1 -> {
@@ -753,15 +832,26 @@ fn do_find_pivot_position(
         current_pivot_col,
       )
 
-    _other -> option.Some(#(current_pivot_row, current_pivot_col))
+    _other -> Ok(option.Some(#(current_pivot_row, current_pivot_col)))
   }
 }
 
 fn map_rows(matrix: Matrix, map: fn(List(Float)) -> a) -> List(a) {
+  // can't fail because we always return ok
+  let assert Ok(mapped) = try_map_rows(matrix, fn(a) { Ok(map(a)) })
+
+  mapped
+}
+
+fn try_map_rows(
+  matrix: Matrix,
+  map: fn(List(Float)) -> Result(a, b),
+) -> Result(List(a), b) {
   list.range(0, matrix.rows - 1)
-  |> list.map(fn(row) {
+  |> list.try_map(fn(row) {
     list.range(0, matrix.columns - 1)
     |> list.map(fn(column) {
+      // Can't fail unless the Matrix is malformed
       let assert Ok(value) = dict.get(matrix.entries, #(row, column))
       value
     })
@@ -779,6 +869,7 @@ fn index_map_row(
   let entries =
     list.range(0, matrix.columns - 1)
     |> list.map(fn(column) {
+      // Can't fail unless the Matrix is malformed
       let assert Ok(value) = dict.get(matrix.entries, #(row, column))
       #(#(row, column), map(value, column))
     })
@@ -799,7 +890,7 @@ fn map_row(
   index_map_row(matrix, row, fn(value, _index) { map(value) })
 }
 
-fn ok_or(option: option.Option(a), or: b, continue: fn(a) -> b) -> b {
+fn some_or(option: option.Option(a), or: b, continue: fn(a) -> b) -> b {
   case option {
     option.Some(value) -> continue(value)
     option.None -> or
@@ -822,12 +913,14 @@ fn normalize_values(n: Float) -> Float {
   n
 }
 
+// Debugging function left to help out
 fn print_matrix(matrix: Matrix) -> Nil {
   list.range(0, matrix.rows - 1)
   |> list.each(fn(row) {
     io.print("[ ")
     list.range(0, matrix.columns - 1)
     |> list.each(fn(col) {
+      // Can't fail unless the Matrix is malformed
       let assert Ok(value) = dict.get(matrix.entries, #(row, col))
       case float.floor(value) == value {
         True -> io.print(int.to_string(float.truncate(value)) <> " ")
@@ -844,6 +937,16 @@ fn try_pop(list: List(a), or: b, continue continue: fn(a, List(a)) -> b) -> b {
   case list {
     [] -> or
     [head, ..rest] -> continue(head, rest)
+  }
+}
+
+fn try_or_stop(
+  result: Result(a, b),
+  continue: fn(a) -> list.ContinueOrStop(Result(c, b)),
+) -> list.ContinueOrStop(Result(c, b)) {
+  case result {
+    Ok(a) -> continue(a)
+    Error(error) -> list.Stop(Error(error))
   }
 }
 
