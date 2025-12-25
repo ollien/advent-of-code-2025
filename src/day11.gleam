@@ -22,14 +22,23 @@ pub fn main() {
 
 fn run(input: String) -> Result(Nil, String) {
   use graph <- result.try(parse_input(input))
-
   io.println("Part 1: " <> part1(graph))
+  io.println("Part 2: " <> part2(graph))
+
   Ok(Nil)
 }
 
 fn part1(graph: Graph) -> String {
   count_paths(graph, Node("you"), Node("out"))
   |> int.to_string()
+}
+
+fn part2(graph: Graph) -> String {
+  let srv_fft = count_paths(graph, Node("svr"), Node("fft"))
+  let fft_dac = count_paths(graph, Node("fft"), Node("dac"))
+  let dac_out = count_paths(graph, Node("dac"), Node("out"))
+
+  int.to_string(srv_fft * fft_dac * dac_out)
 }
 
 fn count_paths(graph: Graph, source: Node, target: Node) -> Int {
