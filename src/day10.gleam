@@ -164,7 +164,6 @@ fn do_find_light_config_path_length(
   let #(depth, lights) = entry
 
   use <- bool.guard(matches_desired(lights, target), return: Ok(depth))
-  let visited = set.insert(visited, lights)
 
   let #(to_visit, visited) =
     list.fold(buttons, #(to_visit, visited), fn(acc, button_config) {
@@ -211,6 +210,7 @@ fn apply_button_config(
 
 fn toggle_light(lights: Lights, index: Int) -> Result(Lights, Nil) {
   let Lights(light_map) = lights
+
   light_map
   |> dict.get(index)
   |> result.map(fn(value) { Lights(dict.insert(light_map, index, !value)) })
@@ -599,70 +599,7 @@ fn presses_to_make_joltages(
     |> list.map(pair.second)
 
   slots
-  |> list.fold_until(Ok(option.Some(dict.new())), fn(acc, slot) {
-    // We don't have None or Error in the acc, this is just used as the final result
-    let assert Ok(option.Some(presses_by_index)) = acc
-    let free_presses_res =
-      slot.free_buttons
-      |> list.try_map(fn(indexed_button) {
-        use value <- result.try(
-          free_variables
-          |> dict.get(indexed_button.index)
-          |> result.map_error(fn(_: Nil) {
-            "no corresponding free variable for button "
-            <> int.to_string(indexed_button.index)
-          }),
-        )
-
-        Ok(#(indexed_button, value))
-      })
-
-    use free_presses <- try_or_stop(free_presses_res)
-
-    let local_presses_res =
-      slot.equation_buttons
-      |> list.try_map(fn(entry) {
-        let #(indexed_button, equation) = entry
-        plug_into_equation(equation, ordered_free_vars)
-        |> result.map(fn(solve_result) { #(indexed_button, solve_result) })
-      })
-      |> result.map(fn(equation_presses) {
-        equation_presses
-        |> list.append(free_presses)
-        |> dict.from_list()
-      })
-
-    use local_presses <- try_or_stop(local_presses_res)
-
-    let joltage = float.sum(dict.values(local_presses))
-    let presses_valid =
-      local_presses
-      |> dict.values()
-      |> list.all(fn(value) {
-        normalize_values(value) >=. 0.0
-        && normalize_values(value) == float.floor(value)
-      })
-
-    let is_joltage =
-      float.loosely_equals(
-        joltage,
-        int.to_float(slot.required_joltage),
-        epsilon,
-      )
-
-    case is_joltage && presses_valid {
-      False -> list.Stop(Ok(option.None))
-      True -> {
-        let combined =
-          dict.combine(local_presses, presses_by_index, fn(a, b) {
-            assert a == b
-            a
-          })
-
-        list.Continue(Ok(option.Some(combined)))
-      }
-    }
-  })
+  |> do_presses_to_make_joltages(free_variables, ordered_free_vars, dict.new())
   |> result.map(fn(outcome) {
     option.map(outcome, fn(presses) {
       presses
@@ -671,6 +608,77 @@ fn presses_to_make_joltages(
       |> float.truncate()
     })
   })
+}
+
+fn do_presses_to_make_joltages(
+  slots: List(JoltageSlot),
+  free_variables: dict.Dict(Int, Float),
+  ordered_free_variables: List(Float),
+  presses_by_index: dict.Dict(IndexedButton, Float),
+) -> Result(option.Option(dict.Dict(IndexedButton, Float)), String) {
+  use slot, slots <- try_pop(slots, Ok(option.Some(presses_by_index)))
+
+  let free_presses_res =
+    slot.free_buttons
+    |> list.try_map(fn(indexed_button) {
+      use value <- result.try(
+        free_variables
+        |> dict.get(indexed_button.index)
+        |> result.map_error(fn(_: Nil) {
+          "no corresponding free variable for button "
+          <> int.to_string(indexed_button.index)
+        }),
+      )
+
+      Ok(#(indexed_button, value))
+    })
+
+  use free_presses <- result.try(free_presses_res)
+
+  let local_presses_res =
+    slot.equation_buttons
+    |> list.try_map(fn(entry) {
+      let #(indexed_button, equation) = entry
+      plug_into_equation(equation, ordered_free_variables)
+      |> result.map(fn(solve_result) { #(indexed_button, solve_result) })
+    })
+    |> result.map(fn(equation_presses) {
+      equation_presses
+      |> list.append(free_presses)
+      |> dict.from_list()
+    })
+
+  use local_presses <- result.try(local_presses_res)
+
+  let joltage = float.sum(dict.values(local_presses))
+  let presses_valid =
+    local_presses
+    |> dict.values()
+    |> list.all(fn(value) {
+      normalize_values(value) >=. 0.0
+      && normalize_values(value) == float.floor(value)
+    })
+
+  let is_joltage =
+    float.loosely_equals(joltage, int.to_float(slot.required_joltage), epsilon)
+
+  case is_joltage && presses_valid {
+    False -> Ok(option.None)
+    True -> {
+      let combined =
+        dict.combine(local_presses, presses_by_index, fn(a, b) {
+          assert a == b
+          a
+        })
+
+      do_presses_to_make_joltages(
+        slots,
+        free_variables,
+        ordered_free_variables,
+        combined,
+      )
+    }
+  }
 }
 
 fn new_matrix(rows: List(List(Float))) -> Result(Matrix, Nil) {
@@ -966,16 +974,6 @@ fn try_pop(list: List(a), or: b, continue continue: fn(a, List(a)) -> b) -> b {
   case list {
     [] -> or
     [head, ..rest] -> continue(head, rest)
-  }
-}
-
-fn try_or_stop(
-  result: Result(a, b),
-  continue: fn(a) -> list.ContinueOrStop(Result(c, b)),
-) -> list.ContinueOrStop(Result(c, b)) {
-  case result {
-    Ok(a) -> continue(a)
-    Error(error) -> list.Stop(Error(error))
   }
 }
 
